@@ -1,0 +1,20 @@
+{
+  "timeout": {
+    "description": "请求超时时间（秒）",
+    "type": "int",
+    "hint": "单个接口请求的最长等待时间",
+    "default": 15
+  },
+  "cache_ttl": {
+    "description": "结果缓存时长（秒）",
+    "type": "int",
+    "hint": "同一查询在该时间内直接返回缓存，减少对站点的请求；设 0 可基本关闭",
+    "default": 60
+  },
+  "default_season_id": {
+    "description": "默认赛季 ID（兜底）",
+    "type": "string",
+    "hint": "正常自动获取当前赛季；自动失败时用此值。赛季更新后如数据异常可手动更新",
+    "default": "9620020"
+  }
+}

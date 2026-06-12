@@ -1,0 +1,11 @@
+name: "astrbot_plugin_naraka"
+desc: "永劫无间战绩查询：排位/天人三档分数、当前模式赛季数据、最近对局场均伤害/振刀/击败、常用英雄、队友统计与逐场明细。数据源为小程序，仅适配 QQ。"
+help: "战绩查询 <昵称/UID> [模式]  查询概览\n详细查询 <昵称/UID> [模式]  最近对局逐场明细\n模式可选：天选/天人 + 单排/双排/三排，不填按最近一场自动判断（跳过匹配）"
+version: "2.2.0"
+author: "YourName"
+repo: ""
+display_name: "永劫无间战绩查询"
+short_desc: "永劫无间玩家战绩查询插件"
+astrbot_version: ">=4.0.0"
+support_platforms:
+  - aiocqhttp
