@@ -21,23 +21,28 @@ import astrbot.api.message_components as Comp
 
 from . import fetcher
 from . import formatter
+from . import render
 from .constants import (
-    GAME_MODES, GAME_MODE_NAMES, TEAMMATE_COUNT, DEFAULT_CATEGORY,
-    CATEGORY_ALIASES, TEAM_ALIASES, DEFAULT_HEADERS, split_subtype,
+    GAME_MODES,
+    TEAMMATE_COUNT,
+    CATEGORY_ALIASES,
+    TEAM_ALIASES,
+    DEFAULT_HEADERS,
 )
 
 
 @register(
-    "astrbot_plugin_naraka", "YourName",
-    "永劫无间战绩查询：排位/天人三档分数、最近对局场均、队友统计、逐场明细。",
-    "2.0.0",
+    "astrbot_plugin_naraka",
+    "YourName",
+    "永劫无间战绩查询：排位/天人三档分数、最近对局场均、队友统计、逐场明细、水墨风战绩图片。",
+    "2.4.0",
 )
 class NarakaPlugin(Star):
     def __init__(self, context: Context, config: AstrBotConfig):
         super().__init__(context)
         self.config = config
-        self._cache: dict = {}                  # 整体结果短期缓存
-        self._detail_cache: dict = {}           # 单场详情长期缓存（历史对局不变）
+        self._cache: dict = {}  # 整体结果短期缓存
+        self._detail_cache: dict = {}  # 单场详情长期缓存（历史对局不变）
 
     # ----------------------- 配置 -----------------------
     @property
@@ -51,6 +56,13 @@ class NarakaPlugin(Star):
     @property
     def _default_season_id(self):
         return str(self.config.get("default_season_id", "9620020"))
+
+    @property
+    def _image_scale(self):
+        """根据清晰度配置返回渲染倍数（用于 HTML 内部 zoom 放大）。"""
+        quality = str(self.config.get("image_quality", "high")).lower()
+        scale_map = {"normal": 1.5, "high": 2.0, "ultra": 3.0}
+        return scale_map.get(quality, 2.0)
 
     # ----------------------- 参数解析 -----------------------
     @staticmethod
@@ -80,7 +92,7 @@ class NarakaPlugin(Star):
             else:
                 for ca, cs in CATEGORY_ALIASES.items():
                     if tk.startswith(ca):
-                        rest = tk[len(ca):]
+                        rest = tk[len(ca) :]
                         if rest in TEAM_ALIASES:
                             category, team = cs, TEAM_ALIASES[rest]
                             break
@@ -102,7 +114,9 @@ class NarakaPlugin(Star):
             if (role_id, b, "p") in self._detail_cache:
                 out[b] = self._detail_cache[(role_id, b, "p")]
             else:
-                out[b] = self._detail_cache.get((role_id, b, "p_err"), {"error": "查询失败"})
+                out[b] = self._detail_cache.get(
+                    (role_id, b, "p_err"), {"error": "查询失败"}
+                )
         return out
 
     async def _teams_cached(self, session, role_id, battle_ids):
@@ -120,7 +134,9 @@ class NarakaPlugin(Star):
             if (role_id, b, "t") in self._detail_cache:
                 out[b] = self._detail_cache[(role_id, b, "t")]
             else:
-                out[b] = self._detail_cache.get((role_id, b, "t_err"), {"error": "查询失败"})
+                out[b] = self._detail_cache.get(
+                    (role_id, b, "t_err"), {"error": "查询失败"}
+                )
         return out
 
     # ----------------------- 解析玩家 -----------------------
@@ -131,30 +147,24 @@ class NarakaPlugin(Star):
         return p  # 可能含 error
 
     # ===================== 概览 =====================
-    async def _do_overview(self, raw_args):
+    async def _gather_overview_data(self, raw_args):
+        """获取概览所需的全部数据。成功返回数据字典，失败返回 {"error": ...}。"""
         player_query, category, team = self._parse_mode(raw_args)
         if not player_query:
-            return self._usage()
-
-        cache_key = f"O|{player_query}|{category}|{team}"
-        now = time.time()
-        c = self._cache.get(cache_key)
-        if c and c[0] > now:
-            return c[1]
+            return {"error": "__usage__"}
 
         async with aiohttp.ClientSession(headers=DEFAULT_HEADERS) as session:
             player = await self._resolve_player(session, player_query)
             if "error" in player:
-                return f"❌ {player['error']}"
+                return {"error": player["error"]}
             role_id = player["roleIdSimple"]
 
-            # 第一次 recent（不带模式）：用于判断当前模式
             recent = await fetcher.fetch_recent(session, role_id, 20, self._timeout)
             if "error" in recent:
-                return f"❌ {recent['error']}"
+                return {"error": recent["error"]}
             base_list = recent.get("list", [])
             if not base_list:
-                return f"❌ {player.get('roleName', role_id)} 暂无最近对局记录"
+                return {"error": f"{player.get('roleName', role_id)} 暂无最近对局记录"}
 
             if player.get("roleName") == role_id:
                 pinfo = recent.get("playerInfo")
@@ -167,7 +177,9 @@ class NarakaPlugin(Star):
                 cur_subtype = GAME_MODES.get((cur_cat, cur_team))
                 cur_mode_name = f"{cur_cat}{cur_team}"
             else:
-                auto_cat, auto_team, auto_sub = formatter.current_mode_from_recent(base_list)
+                auto_cat, auto_team, auto_sub = formatter.current_mode_from_recent(
+                    base_list
+                )
                 if auto_cat:
                     cur_cat, cur_team, cur_subtype = auto_cat, auto_team, auto_sub
                     cur_mode_name = f"{cur_cat}{cur_team}"
@@ -175,7 +187,7 @@ class NarakaPlugin(Star):
                     cur_cat = cur_team = cur_subtype = None
                     cur_mode_name = "最近对局"
 
-            # 取“当前模式的对局”：带 gameMode 再查一次（拿该模式最近约10场）
+            # 取“当前模式的对局”
             if cur_subtype is not None:
                 mode_recent = await fetcher.fetch_recent(
                     session, role_id, 20, self._timeout, game_mode=cur_subtype
@@ -183,61 +195,112 @@ class NarakaPlugin(Star):
                 if isinstance(mode_recent, dict) and "error" not in mode_recent:
                     mode_matches = mode_recent.get("list", []) or []
                 else:
-                    # 该模式查询失败，退回用基础列表里筛
                     mode_matches = formatter.filter_by_subtype(base_list, cur_subtype)
             else:
-                # 全是匹配/无支持模式：当前模式=最近对局，用基础列表
                 mode_matches = list(base_list)
             if not mode_matches:
                 mode_matches = list(base_list)
 
-            # 三档分数（天选101/102/103；天人单403/双402/三401）
-            season_id = formatter.extract_current_season_id(
-                await fetcher.fetch_seasons(session, self._timeout)
-            ) or self._default_season_id
+            # 三档分数
+            season_id = (
+                formatter.extract_current_season_id(
+                    await fetcher.fetch_seasons(session, self._timeout)
+                )
+                or self._default_season_id
+            )
             tier_modes = [101, 102, 103, 403, 402, 401]
             if cur_subtype and cur_subtype not in tier_modes:
                 tier_modes.append(cur_subtype)
-            stats_map = await fetcher.fetch_stats_multi(session, role_id, tier_modes, season_id, self._timeout)
+            stats_map = await fetcher.fetch_stats_multi(
+                session, role_id, tier_modes, season_id, self._timeout
+            )
 
             def score_of(gm):
                 d = stats_map.get(gm)
-                if isinstance(d, dict) and "error" not in d and isinstance(d.get("grade"), dict):
+                if (
+                    isinstance(d, dict)
+                    and "error" not in d
+                    and isinstance(d.get("grade"), dict)
+                ):
                     return d["grade"].get("gradeScore", 0) or 0
                 return 0
+
             tier_scores = {
-                "排位": [score_of(101), score_of(102), score_of(103)],   # 单双三
-                "天人": [score_of(403), score_of(402), score_of(401)],   # 单双三（天人反序）
+                "排位": [score_of(101), score_of(102), score_of(103)],
+                "天人": [score_of(403), score_of(402), score_of(401)],
             }
             cur_stats = stats_map.get(cur_subtype)
             if not (isinstance(cur_stats, dict) and "error" not in cur_stats):
                 cur_stats = None
 
-            # 自己场均（只当前模式的场，需逐场 person 振刀）
+            # 自己场均
             mode_ids = [m.get("battleId") for m in mode_matches]
             person_map = await self._persons_cached(session, role_id, mode_ids)
             self_avg = formatter.self_averages(mode_matches, person_map)
             if "error" in self_avg:
                 if self_avg.get("rate_limited"):
-                    return "❌ 查询过于频繁，站点限流了，请过一会儿再查～"
-                return f"❌ 战绩查询失败：{self_avg['error']}"
+                    return {"error": "查询过于频繁，站点限流了，请过一会儿再查～"}
+                return {"error": f"战绩查询失败：{self_avg['error']}"}
 
             heroes = formatter.top_heroes(mode_matches, 5)
+            detail = formatter.detail_rows(mode_matches, person_map)
 
-            # 队友（只当前模式的场）
             team_count = TEAMMATE_COUNT.get(cur_team, 0) if cur_team else 0
             mates = []
             if team_count > 0:
                 team_map = await self._teams_cached(session, role_id, mode_ids)
-                mates = formatter.teammate_stats(mode_matches, team_map, person_map, team_count)
+                mates = formatter.teammate_stats(
+                    mode_matches, team_map, person_map, team_count
+                )
 
-            result = formatter.format_overview(
-                player, tier_scores, cur_stats, cur_mode_name,
-                mode_matches, self_avg, heroes, mates,
-            )
-            final = f" 当前ID: {player.get('roleName', role_id)}\n" + result
-            self._cache[cache_key] = (now + self._cache_ttl, final)
-            return final
+            display_name = player.get("roleName") or "未知"
+            if display_name == role_id:
+                display_name = "未知"
+
+            return {
+                "player": player,
+                "role_id": role_id,
+                "display_name": display_name,
+                "tier_scores": tier_scores,
+                "cur_stats": cur_stats,
+                "cur_mode_name": cur_mode_name,
+                "mode_matches": mode_matches,
+                "self_avg": self_avg,
+                "heroes": heroes,
+                "mates": mates,
+                "detail": detail,
+            }
+
+    async def _do_overview(self, raw_args):
+        player_query, category, team = self._parse_mode(raw_args)
+        if not player_query:
+            return self._usage()
+
+        cache_key = f"O|{player_query}|{category}|{team}"
+        now = time.time()
+        c = self._cache.get(cache_key)
+        if c and c[0] > now:
+            return c[1]
+
+        data = await self._gather_overview_data(raw_args)
+        if "error" in data:
+            if data["error"] == "__usage__":
+                return self._usage()
+            return f"❌ {data['error']}"
+
+        result = formatter.format_overview(
+            data["player"],
+            data["tier_scores"],
+            data["cur_stats"],
+            data["cur_mode_name"],
+            data["mode_matches"],
+            data["self_avg"],
+            data["heroes"],
+            data["mates"],
+        )
+        final = f" 当前ID: {data['display_name']}\nUID: {data['role_id']}\n" + result
+        self._cache[cache_key] = (now + self._cache_ttl, final)
+        return final
 
     # ===================== 详细 =====================
     async def _do_detail(self, raw_args):
@@ -273,7 +336,9 @@ class NarakaPlugin(Star):
                 cur_subtype = GAME_MODES.get((category, team))
                 cur_mode_name = f"{category}{team}"
             else:
-                auto_cat, auto_team, auto_sub = formatter.current_mode_from_recent(base_list)
+                auto_cat, auto_team, auto_sub = formatter.current_mode_from_recent(
+                    base_list
+                )
                 if auto_cat:
                     cur_subtype = auto_sub
                     cur_mode_name = f"{auto_cat}{auto_team}"
@@ -304,7 +369,9 @@ class NarakaPlugin(Star):
                         return "❌ 查询过于频繁，站点限流了，请过一会儿再查～"
                     return "❌ 战绩查询失败：部分单场详情查询失败"
 
-            result = formatter.format_detail(player, mode_matches, person_map, cur_mode_name)
+            result = formatter.format_detail(
+                player, mode_matches, person_map, cur_mode_name
+            )
             self._cache[cache_key] = (now + self._cache_ttl, result)
             return result
 
@@ -351,4 +418,71 @@ class NarakaPlugin(Star):
         except Exception as e:  # noqa: BLE001
             logger.error(f"[naraka] 详细异常 {type(e).__name__}: {e}")
             text = "❌ 查询时发生错误，请稍后再试。"
+        yield event.chain_result(self._build_chain(event, text))
+
+    @filter.command("永劫战绩", alias={"战绩图"})
+    async def cmd_overview_image(self, event: AstrMessageEvent):
+        """永劫战绩 <昵称/UID> [模式]：水墨风战绩图片，渲染失败则降级为文字"""
+        args = self._extract_args(event)
+        if not args:
+            yield event.chain_result(self._build_chain(event, self._usage()))
+            return
+
+        # 获取数据
+        try:
+            data = await self._gather_overview_data(args)
+        except Exception as e:  # noqa: BLE001
+            logger.error(f"[naraka] 图片数据获取异常 {type(e).__name__}: {e}")
+            yield event.chain_result(
+                self._build_chain(event, "❌ 查询时发生错误，请稍后再试。")
+            )
+            return
+
+        if "error" in data:
+            if data["error"] == "__usage__":
+                yield event.chain_result(self._build_chain(event, self._usage()))
+            else:
+                yield event.chain_result(
+                    self._build_chain(event, f"❌ {data['error']}")
+                )
+            return
+
+        # 尝试渲染图片
+        try:
+            html = render.build_html(
+                data["display_name"],
+                data["role_id"],
+                data["tier_scores"],
+                data["cur_stats"],
+                data["cur_mode_name"],
+                len(data["mode_matches"]),
+                data["heroes"],
+                data["self_avg"],
+                data["mates"],
+                data["detail"],
+                self._image_scale,
+            )
+            # 清晰度由 HTML 内部 zoom 放大实现（不依赖框架 device_scale_factor）
+            image_url = await self.html_render(
+                html, {}, options={"full_page": True, "type": "png"}
+            )
+            if image_url:
+                yield event.image_result(image_url)
+                return
+            logger.warning("[naraka] html_render 返回空，降级为文字")
+        except Exception as e:  # noqa: BLE001
+            logger.error(f"[naraka] 图片渲染失败，降级文字 {type(e).__name__}: {e}")
+
+        # 降级：发文字版概览（复用已获取的数据，不再重复请求）
+        result = formatter.format_overview(
+            data["player"],
+            data["tier_scores"],
+            data["cur_stats"],
+            data["cur_mode_name"],
+            data["mode_matches"],
+            data["self_avg"],
+            data["heroes"],
+            data["mates"],
+        )
+        text = f" 当前ID: {data['display_name']}\nUID: {data['role_id']}\n" + result
         yield event.chain_result(self._build_chain(event, text))

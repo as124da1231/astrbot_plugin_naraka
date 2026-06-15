@@ -1,4 +1,11 @@
 {
+  "image_quality": {
+    "description": "战绩图片清晰度",
+    "type": "string",
+    "hint": "永劫战绩图片的渲染清晰度。normal=普通(快、文件小)，high=高清(推荐)，ultra=超清(最清晰，文件大、稍慢)",
+    "options": ["normal", "high", "ultra"],
+    "default": "high"
+  },
   "timeout": {
     "description": "请求超时时间（秒）",
     "type": "int",

@@ -13,8 +13,12 @@ import aiohttp
 from astrbot.api import logger
 
 from .constants import (
-    API_SEARCH, API_SEASONS, API_STATS, API_RECENT,
-    API_DETAIL_PERSON, API_DETAIL_TEAM,
+    API_SEARCH,
+    API_SEASONS,
+    API_STATS,
+    API_RECENT,
+    API_DETAIL_PERSON,
+    API_DETAIL_TEAM,
 )
 
 
@@ -94,7 +98,9 @@ async def fetch_stats(session, role_id, game_mode, season_id, timeout=15) -> dic
     return data
 
 
-async def fetch_recent(session, role_id, page_size=20, timeout=15, game_mode=None) -> dict:
+async def fetch_recent(
+    session, role_id, page_size=20, timeout=15, game_mode=None
+) -> dict:
     """最近对局列表（小程序）。返回含 list 的 data。
 
     传 game_mode 时只返回该模式的对局（接口对每个模式独立返回最近约10场）。
@@ -164,7 +170,9 @@ async def fetch_teams(session, role_id, battle_ids, timeout=15) -> list:
     return await _gather_limited(factories)
 
 
-async def fetch_stats_multi(session, role_id, game_modes, season_id, timeout=15) -> dict:
+async def fetch_stats_multi(
+    session, role_id, game_modes, season_id, timeout=15
+) -> dict:
     """限并发拉取多个模式的 stats，返回 {game_mode: data_or_error}。"""
     factories = [
         (lambda gm=gm: fetch_stats(session, role_id, gm, season_id, timeout))
