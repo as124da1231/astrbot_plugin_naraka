@@ -8,7 +8,7 @@
   "react_emoji_id": {
     "description": "贴的表情 ID",
     "type": "string",
-    "hint": "QQ 表情回应的表情 ID，默认 277（敬礼）。如不显示或想换表情，可改此 ID",
+    "hint": "QQ 表情回应的表情 ID，默认 277。不同协议端支持的表情不同，如不显示或想换表情，可改此 ID",
     "default": "277"
   },
   "image_quality": {
