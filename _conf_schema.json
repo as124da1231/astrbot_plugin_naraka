@@ -1,4 +1,16 @@
 {
+  "react_emoji": {
+    "description": "收到永劫战绩指令时贴表情回应",
+    "type": "bool",
+    "hint": "开启后，收到「永劫战绩」指令会给该消息贴一个表情，提示正在处理（仅 QQ 生效）",
+    "default": true
+  },
+  "react_emoji_id": {
+    "description": "贴的表情 ID",
+    "type": "string",
+    "hint": "QQ 表情回应的表情 ID，默认 277（敬礼）。如不显示或想换表情，可改此 ID",
+    "default": "277"
+  },
   "image_quality": {
     "description": "战绩图片清晰度",
     "type": "string",

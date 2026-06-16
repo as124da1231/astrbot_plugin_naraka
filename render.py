@@ -109,12 +109,8 @@ def build_html(
     if detail:
         rows_html = ""
         for r in detail:
-            rrank = r.get("rank", "?")
-            rk_cls = (
-                "r1"
-                if str(rrank) == "1"
-                else ("r3" if str(rrank) in ("2", "3") else "")
-            )
+            rrank = escape(str(r.get("rank", "?")))
+            rk_cls = "r1" if rrank == "1" else ("r3" if rrank in ("2", "3") else "")
             rows_html += (
                 f'<div class="drow">'
                 f'<span class="drk {rk_cls}">#{rrank}</span>'

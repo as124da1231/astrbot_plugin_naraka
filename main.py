@@ -35,7 +35,7 @@ from .constants import (
     "astrbot_plugin_naraka",
     "YourName",
     "永劫无间战绩查询：排位/天人三档分数、最近对局场均、队友统计、逐场明细、水墨风战绩图片。",
-    "2.4.0",
+    "2.5.0",
 )
 class NarakaPlugin(Star):
     def __init__(self, context: Context, config: AstrBotConfig):
@@ -63,6 +63,44 @@ class NarakaPlugin(Star):
         quality = str(self.config.get("image_quality", "high")).lower()
         scale_map = {"normal": 1.5, "high": 2.0, "ultra": 3.0}
         return scale_map.get(quality, 2.0)
+
+    @property
+    def _react_enabled(self):
+        return bool(self.config.get("react_emoji", True))
+
+    @property
+    def _react_emoji_id(self):
+        return str(self.config.get("react_emoji_id", "277"))
+
+    async def _react_to_msg(self, event):
+        """给触发指令的消息贴一个表情回应（仅 aiocqhttp/QQ）。失败静默，不影响主流程。"""
+        if not self._react_enabled:
+            return
+        try:
+            if event.get_platform_name() != "aiocqhttp":
+                return
+            client = event.bot
+            await client.api.call_action(
+                "set_msg_emoji_like",
+                message_id=event.message_obj.message_id,
+                emoji_id=self._react_emoji_id,
+            )
+        except Exception as e:  # noqa: BLE001
+            logger.warning(
+                f"[naraka] 贴表情失败（不影响主流程）: {type(e).__name__}: {e}"
+            )
+
+    @staticmethod
+    def _image_chain(event, image_url, caption):
+        """组装 @发起人 + 文字 + 图片 的消息链。"""
+        sender = event.get_sender_id()
+        return [
+            Comp.At(qq=sender),
+            Comp.Plain(f" {caption}\n"),
+            Comp.Image.fromURL(image_url)
+            if str(image_url).startswith("http")
+            else Comp.Image.fromFileSystem(image_url),
+        ]
 
     # ----------------------- 参数解析 -----------------------
     @staticmethod
@@ -428,6 +466,9 @@ class NarakaPlugin(Star):
             yield event.chain_result(self._build_chain(event, self._usage()))
             return
 
+        # 收到指令先贴表情回应，告知用户正在处理
+        await self._react_to_msg(event)
+
         # 获取数据
         try:
             data = await self._gather_overview_data(args)
@@ -467,7 +508,10 @@ class NarakaPlugin(Star):
                 html, {}, options={"full_page": True, "type": "png"}
             )
             if image_url:
-                yield event.image_result(image_url)
+                # @发起人 + 完成文字 + 图片
+                yield event.chain_result(
+                    self._image_chain(event, image_url, "永劫战绩生成完毕")
+                )
                 return
             logger.warning("[naraka] html_render 返回空，降级为文字")
         except Exception as e:  # noqa: BLE001
