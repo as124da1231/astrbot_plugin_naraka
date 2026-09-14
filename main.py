@@ -107,7 +107,7 @@ def _choose_season(options: object, requested: str) -> tuple[str, str]:
     return match[0], match[1]
 
 
-@register(PLUGIN, "Community", "永劫无间端游战绩查询", "1.0.2")
+@register(PLUGIN, "as124da1231", "永劫无间端游战绩查询", "1.0.3")
 class NarakaPlugin(Star):
     def __init__(self, context: Context, config: AstrBotConfig):
         super().__init__(context)

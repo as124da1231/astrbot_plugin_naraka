@@ -2,6 +2,8 @@
 
 适用于 AstrBot 与 QQ（aiocqhttp）的永劫无间**端游**战绩插件。按昵称或角色 ID 查询小黑盒中的近期对局、单局详情和赛季总览。数据来自小黑盒的非公开接口，使用前需由管理员扫码登录小黑盒。
 
+项目地址：[as124da1231/astrbot_plugin_naraka](https://github.com/as124da1231/astrbot_plugin_naraka)。
+
 ## 安装与登录
 
 将插件目录 `astrbot_plugin_naraka` 放入 AstrBot 的 `data/plugins/`，或在插件管理页上传发布 ZIP 后重载。安装 `requirements.txt` 中的依赖。管理员私聊机器人发送 `/永劫登录`，用小黑盒 App 扫码确认。登录凭证只保存在 AstrBot 的 `data/plugin_data/astrbot_plugin_naraka/login.json`，不会打包进插件。
