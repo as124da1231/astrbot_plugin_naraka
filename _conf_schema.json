@@ -1,0 +1,70 @@
+{
+  "query_match_count": {
+    "type": "int",
+    "description": "查询对局数",
+    "hint": "目标查询场次，默认 30，不设插件上限。超过单页数量时尝试翻页；若小黑盒不提供后续页面，只显示实际取到的场次。",
+    "default": 30
+  },
+  "selected_match_count": {
+    "type": "int",
+    "description": "有效对局选择数",
+    "hint": "筛选目标模式后最多尝试查询几场详情，不设插件上限。详情失败不从更早的对局补位，实际有效场次可能更少。",
+    "default": 10
+  },
+  "query_interval_seconds": {
+    "type": "float",
+    "description": "查询间隔（秒）",
+    "hint": "所有小黑盒战绩请求之间的最短间隔，建议 4 秒；设置 0 可关闭。",
+    "default": 4.0
+  },
+  "detail_interval_seconds": {
+    "type": "float",
+    "description": "有效对局详情查询间隔（秒）",
+    "hint": "两次单局详情请求之间的最短间隔，建议 4 秒；仍受查询间隔约束。",
+    "default": 4.0
+  },
+  "enable_group_whitelist": {
+    "type": "bool",
+    "description": "启用群聊白名单",
+    "hint": "开启后仅下方列出的 QQ 群可在群聊使用战绩查询、详细查询等公开指令；私聊不受影响。",
+    "default": false
+  },
+  "group_whitelist": {
+    "type": "list",
+    "description": "群聊白名单（群号）",
+    "hint": "每行填写一个 QQ 群号。启用白名单后，列表为空会禁止所有群聊查询。",
+    "default": []
+  },
+  "enable_start_notice": {
+    "type": "bool",
+    "description": "开始查询时发送提示",
+    "hint": "默认关闭。开启后按下方选择引用原消息、@查询人，或给原消息贴 QQ 表情回应。",
+    "default": false
+  },
+  "start_notice_method": {
+    "type": "string",
+    "description": "开始提示方式",
+    "hint": "quote=引用原消息并发文字；mention=@查询人并发文字；reaction=给原消息贴 QQ 表情回应，不另发消息。",
+    "options": ["quote", "mention", "reaction"],
+    "default": "quote"
+  },
+  "start_notice_text": {
+    "type": "string",
+    "description": "开始提示文字",
+    "hint": "提示方式为引用或 @ 时发送的文字。",
+    "default": "正在查询战绩，请稍候…"
+  },
+  "react_emoji_id": {
+    "type": "string",
+    "description": "QQ 表情回应 ID",
+    "hint": "开始提示方式为 reaction 时使用，默认 277；仅 aiocqhttp 生效。",
+    "default": "277"
+  },
+  "result_reply_method": {
+    "type": "string",
+    "description": "战绩结果回复方式",
+    "hint": "quote=引用原消息；mention=@查询人。群聊和私聊都支持引用；私聊选择 @ 时发送普通文字。",
+    "options": ["quote", "mention"],
+    "default": "mention"
+  }
+}

@@ -1,0 +1,11 @@
+name: astrbot_plugin_naraka
+desc: 通过小黑盒查询永劫无间端游近期战绩与单局详情，支持昵称搜索、模式筛选和 QQ 表情回应。
+version: 1.0.2
+author: Community
+repo: ""
+display_name: 永劫无间战绩查询
+short_desc: 永劫无间端游玩家战绩查询
+help: "战绩查询 <昵称或角色ID> [模式]：场均概览\n详细查询 <昵称或角色ID> [模式]：逐场详情\n/永劫搜索 <昵称>：搜索角色ID\n/永劫登录：管理员私聊扫码登录小黑盒"
+astrbot_version: ">=4.0.0"
+support_platforms:
+  - aiocqhttp
