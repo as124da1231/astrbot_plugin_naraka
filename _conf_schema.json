@@ -11,6 +11,184 @@
     "hint": "筛选目标模式后最多尝试查询几场详情，不设插件上限。详情失败不从更早的对局补位，实际有效场次可能更少。",
     "default": 10
   },
+  "hero_mappings": {
+    "type": "template_list",
+    "description": "英雄编号与名称对照",
+    "hint": "点击添加条目，填写编号和名称；已有条目可展开修改。支持两位编号（如 30）或完整英雄编号。保存后下一次查询生效，优先于接口返回的名称。",
+    "templates": {
+      "hero": {
+        "name": "英雄编号对照",
+        "display_item": "hero_id",
+        "hide_hint_in_list": true,
+        "items": {
+          "hero_id": {
+            "description": "英雄编号",
+            "type": "string",
+            "hint": "如 30 或 1000030；建议用页面显示的两位编号。",
+            "default": ""
+          },
+          "hero_name": {
+            "description": "英雄名称",
+            "type": "string",
+            "hint": "如 万钧。",
+            "default": ""
+          }
+        }
+      }
+    },
+    "default": [
+      {
+        "__template_key": "hero",
+        "hero_id": "01",
+        "hero_name": "土御门胡桃"
+      },
+      {
+        "__template_key": "hero",
+        "hero_id": "03",
+        "hero_name": "宁红夜"
+      },
+      {
+        "__template_key": "hero",
+        "hero_id": "04",
+        "hero_name": "迦南"
+      },
+      {
+        "__template_key": "hero",
+        "hero_id": "05",
+        "hero_name": "特木尔"
+      },
+      {
+        "__template_key": "hero",
+        "hero_id": "06",
+        "hero_name": "季沧海"
+      },
+      {
+        "__template_key": "hero",
+        "hero_id": "07",
+        "hero_name": "天海"
+      },
+      {
+        "__template_key": "hero",
+        "hero_id": "09",
+        "hero_name": "妖刀姬"
+      },
+      {
+        "__template_key": "hero",
+        "hero_id": "10",
+        "hero_name": "崔三娘"
+      },
+      {
+        "__template_key": "hero",
+        "hero_id": "11",
+        "hero_name": "岳山"
+      },
+      {
+        "__template_key": "hero",
+        "hero_id": "13",
+        "hero_name": "无尘"
+      },
+      {
+        "__template_key": "hero",
+        "hero_id": "15",
+        "hero_name": "顾清寒"
+      },
+      {
+        "__template_key": "hero",
+        "hero_id": "16",
+        "hero_name": "武田信忠"
+      },
+      {
+        "__template_key": "hero",
+        "hero_id": "17",
+        "hero_name": "殷紫萍"
+      },
+      {
+        "__template_key": "hero",
+        "hero_id": "18",
+        "hero_name": "沈妙"
+      },
+      {
+        "__template_key": "hero",
+        "hero_id": "20",
+        "hero_name": "胡为"
+      },
+      {
+        "__template_key": "hero",
+        "hero_id": "21",
+        "hero_name": "季莹莹"
+      },
+      {
+        "__template_key": "hero",
+        "hero_id": "22",
+        "hero_name": "玉玲珑"
+      },
+      {
+        "__template_key": "hero",
+        "hero_id": "23",
+        "hero_name": "哈迪"
+      },
+      {
+        "__template_key": "hero",
+        "hero_id": "24",
+        "hero_name": "魏轻"
+      },
+      {
+        "__template_key": "hero",
+        "hero_id": "25",
+        "hero_name": "刘炼"
+      },
+      {
+        "__template_key": "hero",
+        "hero_id": "26",
+        "hero_name": "张起灵"
+      },
+      {
+        "__template_key": "hero",
+        "hero_id": "27",
+        "hero_name": "席拉"
+      },
+      {
+        "__template_key": "hero",
+        "hero_id": "28",
+        "hero_name": "蓝梦"
+      },
+      {
+        "__template_key": "hero",
+        "hero_id": "29",
+        "hero_name": "万钧"
+      },
+      {
+        "__template_key": "hero",
+        "hero_id": "30",
+        "hero_name": "万钧"
+      },
+      {
+        "__template_key": "hero",
+        "hero_id": "31",
+        "hero_name": "李寻欢"
+      },
+      {
+        "__template_key": "hero",
+        "hero_id": "32",
+        "hero_name": "巫真"
+      },
+      {
+        "__template_key": "hero",
+        "hero_id": "33",
+        "hero_name": "甘璇"
+      },
+      {
+        "__template_key": "hero",
+        "hero_id": "70",
+        "hero_name": "南宫锦"
+      },
+      {
+        "__template_key": "hero",
+        "hero_id": "73",
+        "hero_name": "叶修"
+      }
+    ]
+  },
   "query_interval_seconds": {
     "type": "float",
     "description": "查询间隔（秒）",
@@ -45,7 +223,11 @@
     "type": "string",
     "description": "开始提示方式",
     "hint": "quote=引用原消息并发文字；mention=@查询人并发文字；reaction=给原消息贴 QQ 表情回应，不另发消息。",
-    "options": ["quote", "mention", "reaction"],
+    "options": [
+      "quote",
+      "mention",
+      "reaction"
+    ],
     "default": "quote"
   },
   "start_notice_text": {
@@ -64,7 +246,10 @@
     "type": "string",
     "description": "战绩结果回复方式",
     "hint": "quote=引用原消息；mention=@查询人。群聊和私聊都支持引用；私聊选择 @ 时发送普通文字。",
-    "options": ["quote", "mention"],
+    "options": [
+      "quote",
+      "mention"
+    ],
     "default": "mention"
   }
 }

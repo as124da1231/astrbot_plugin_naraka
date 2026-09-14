@@ -25,7 +25,7 @@ from .xiaoheihe_login import (
     _sign_params,
     generate_qr_png,
 )
-from .record_query import KNOWN_HERO_NAMES, MODES, RANKED_IDS, format_details, format_summary, make_record, recent_rows, resolve_mode, select_matches, split_detail_report
+from .record_query import KNOWN_HERO_NAMES, MODES, RANKED_IDS, apply_hero_mappings, format_details, format_summary, make_record, recent_rows, resolve_mode, select_matches, split_detail_report
 
 API = "https://api.xiaoheihe.cn"
 PLUGIN = "astrbot_plugin_naraka"
@@ -107,7 +107,7 @@ def _choose_season(options: object, requested: str) -> tuple[str, str]:
     return match[0], match[1]
 
 
-@register(PLUGIN, "as124da1231", "永劫无间端游战绩查询", "1.0.3")
+@register(PLUGIN, "as124da1231", "永劫无间端游战绩查询", "1.0.4")
 class NarakaPlugin(Star):
     def __init__(self, context: Context, config: AstrBotConfig):
         super().__init__(context)
@@ -472,6 +472,7 @@ class NarakaPlugin(Star):
                                 if _must_stop_after_error(exc):
                                     stopped = True
                                     break
+                hero_names = apply_hero_mappings(hero_names, records, self.config.get("hero_mappings", []))
                 name = str(selected.get("role_name") or player)
                 if detailed:
                     report = format_details(name, total, mode_id, len(matches), records, hero_names, failures)

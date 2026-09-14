@@ -89,7 +89,22 @@ class RecordQueryTests(unittest.TestCase):
         self.assertEqual(query._hero_label("1000001", {}), "01")
         self.assertEqual(query._hero_label("73", {}), "叶修")
         self.assertEqual(query._hero_label("1000073", {}), "叶修")
+        self.assertEqual(query._hero_label("1000070", {}), "南宫锦")
         self.assertEqual(query._hero_label("", {}), "未知英雄")
+
+    def test_editable_hero_mappings_override_catalog_and_support_full_ids(self):
+        catalog = {"1000030": "接口名称", "1000070": "旧名称"}
+        records = [{"hero_id": "1000030"}, {"hero_id": "1000070"}]
+        entries = [
+            {"__template_key": "hero", "hero_id": "30", "hero_name": "万钧"},
+            {"__template_key": "hero", "hero_id": "1000070", "hero_name": "南宫锦"},
+            {"__template_key": "hero", "hero_id": "", "hero_name": "无效"},
+        ]
+        names = query.apply_hero_mappings(catalog, records, entries)
+        self.assertEqual(query._hero_label("1000030", names), "万钧")
+        self.assertEqual(query._hero_label("1000070", names), "南宫锦")
+        self.assertEqual(query._hero_label("1000099", names), "99")
+        self.assertEqual(catalog["1000030"], "接口名称")
 
 
 if __name__ == "__main__":

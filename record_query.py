@@ -34,7 +34,32 @@ KNOWN_HERO_NAMES = {
     "1000016": "武田信忠", "1000011": "岳山", "1000007": "天海",
     "1000025": "刘炼", "1000033": "甘璇", "1000028": "蓝梦",
 }
-KNOWN_HERO_SUFFIXES = {"73": "叶修"}
+KNOWN_HERO_SUFFIXES = {"70": "南宫锦", "73": "叶修"}
+
+
+def apply_hero_mappings(hero_names: dict[str, str], records: list[dict], entries: object) -> dict[str, str]:
+    """Apply editable short or full hero IDs over the API catalog."""
+    result = dict(hero_names)
+    if not isinstance(entries, list):
+        return result
+    overrides = {}
+    for entry in entries:
+        if not isinstance(entry, dict):
+            continue
+        hero_id = str(entry.get("hero_id") or "").strip()
+        hero_name = str(entry.get("hero_name") or "").strip()
+        if hero_id.isdigit() and hero_name:
+            overrides[hero_id] = hero_name
+    observed_ids = set(result)
+    observed_ids.update(str(record.get("hero_id") or "") for record in records)
+    for hero_id in observed_ids:
+        if not hero_id.isdigit():
+            continue
+        exact = overrides.get(hero_id)
+        suffix = overrides.get(hero_id[-2:].zfill(2))
+        if exact or suffix:
+            result[hero_id] = exact or suffix
+    return result
 
 
 def resolve_mode(text: str) -> str:

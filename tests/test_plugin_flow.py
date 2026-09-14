@@ -124,6 +124,13 @@ class PluginFlowTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_query_and_detail_intervals_are_independent(self):
         schema = json.loads((ROOT / "_conf_schema.json").read_text(encoding="utf-8"))
+        hero_field = schema["hero_mappings"]
+        self.assertEqual(hero_field["type"], "template_list")
+        self.assertEqual(hero_field["templates"]["hero"]["display_item"], "hero_id")
+        defaults = {item["hero_id"]: item["hero_name"] for item in hero_field["default"]}
+        self.assertEqual(defaults["30"], "万钧")
+        self.assertEqual(defaults["70"], "南宫锦")
+        self.assertEqual(defaults["73"], "叶修")
         self.assertEqual(schema["query_interval_seconds"]["default"], 4.0)
         self.assertEqual(schema["detail_interval_seconds"]["default"], 4.0)
         plugin = self.main.NarakaPlugin(None, {"query_interval_seconds": 1,
@@ -225,9 +232,11 @@ class PluginFlowTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(slash, ["done"])
         self.assertEqual(unrelated, [])
 
-    async def test_unknown_hero_is_not_dropped_from_command_result(self):
+    async def test_configured_hero_name_updates_both_reports_without_dropping_matches(self):
         plugin = self.main.NarakaPlugin(None, {"query_match_count": 2,
                                               "selected_match_count": 2,
+                                              "hero_mappings": [{"__template_key": "hero",
+                                                                 "hero_id": "30", "hero_name": "自定义万钧"}],
                                               "detail_interval_seconds": 0})
         rows = [{"match_id": str(i), "battle_tid": "12", "time": str(200 - i),
                  "hero_id": hero, "damage": damage, "scene": "3"}
@@ -259,10 +268,11 @@ class PluginFlowTests(unittest.IsolatedAsyncioTestCase):
             summary = [item async for item in plugin.query_records(FakeEvent(), TEST_ROLE_ID)]
             details = [item async for item in plugin.query_match_details(FakeEvent(), TEST_ROLE_ID)]
         self.assertIn("有效对局：2", summary[-1][1][1])
-        self.assertIn("万钧  2场", summary[-1][1][1])
+        self.assertIn("1、万钧  1场", summary[-1][1][1])
+        self.assertIn("2、自定义万钧  1场", summary[-1][1][1])
         self.assertIn("场均伤害：15000.0", summary[-1][1][1])
         self.assertIn("有效对局 2 场", details[-1][1][1])
-        self.assertIn("英雄：万钧", details[-1][1][1])
+        self.assertIn("英雄：自定义万钧", details[-1][1][1])
 
     async def test_notice_and_result_reply_methods(self):
         plugin = self.main.NarakaPlugin(None, {})
