@@ -192,13 +192,13 @@
   "query_interval_seconds": {
     "type": "float",
     "description": "查询间隔（秒）",
-    "hint": "所有小黑盒战绩请求之间的最短间隔，建议 4 秒；设置 0 可关闭。",
+    "hint": "两次发起查询之间的最短间隔，用于防止重复触发；不会延迟一次查询内部的普通接口请求。建议 4 秒，设置 0 可关闭。",
     "default": 4.0
   },
   "detail_interval_seconds": {
     "type": "float",
     "description": "有效对局详情查询间隔（秒）",
-    "hint": "两次单局详情请求之间的最短间隔，建议 4 秒；仍受查询间隔约束。",
+    "hint": "同一次查询中，相邻两次单局详情请求之间的最短间隔，建议 4 秒；与上方的发起查询间隔互不影响。",
     "default": 4.0
   },
   "enable_group_whitelist": {
@@ -212,6 +212,12 @@
     "description": "群聊白名单（群号）",
     "hint": "每行填写一个 QQ 群号。启用白名单后，列表为空会禁止所有群聊查询。",
     "default": []
+  },
+  "allow_group_login_qr": {
+    "type": "bool",
+    "description": "允许登录二维码发到群里",
+    "hint": "默认关闭，仅可私聊扫码。开启后，AstrBot 管理员可在群聊使用 /永劫登录并向群里发送小黑盒登录二维码；非管理员仍无权使用此指令。",
+    "default": false
   },
   "enable_start_notice": {
     "type": "bool",

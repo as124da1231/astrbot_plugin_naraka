@@ -40,7 +40,10 @@ def _install_astrbot_stub(data_dir):
 
         @staticmethod
         def permission_type(*args, **kwargs):
-            return lambda function: function
+            def decorate(function):
+                function._required_permission = args[0]
+                return function
+            return decorate
 
         @staticmethod
         def event_message_type(*args, **kwargs):
@@ -66,6 +69,7 @@ def _install_astrbot_stub(data_dir):
     components.Image = types.SimpleNamespace(
         fromURL=lambda url: ("image", url),
         fromFileSystem=lambda path: ("image", path),
+        fromBytes=lambda data: ("image", data),
     )
     astrbot.api = api
     api.event = event
@@ -122,7 +126,36 @@ class PluginFlowTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(outputs, [])
         self.assertTrue(plugin._allowed_group(FakeEvent("")))
 
-    async def test_query_and_detail_intervals_are_independent(self):
+    async def test_group_login_qr_switch_keeps_admin_permission(self):
+        schema = json.loads((ROOT / "_conf_schema.json").read_text(encoding="utf-8"))
+        self.assertFalse(schema["allow_group_login_qr"]["default"])
+        self.assertEqual(self.main.NarakaPlugin.login._required_permission, "admin")
+        plugin = self.main.NarakaPlugin(None, {})
+        denied = [item async for item in plugin.login(FakeEvent())]
+        self.assertIn("请私聊", denied[0])
+
+        class FakeLoginClient:
+            async def request_qr(self):
+                return types.SimpleNamespace(qr_content="test", expires_at=self.main_time() + 60)
+
+            async def check_qr(self, qr):
+                return types.SimpleNamespace(state=self_state)
+
+            @staticmethod
+            def main_time():
+                return self_main.time.time()
+
+        self_main = self.main
+        self_state = self.main.LoginState.EXPIRED
+        plugin.config["allow_group_login_qr"] = True
+        with patch.object(self.main, "XiaoheiheLoginClient", FakeLoginClient), \
+             patch.object(self.main, "generate_qr_png", return_value=b"qr"), \
+             patch.object(self.main.asyncio, "sleep", AsyncMock()):
+            allowed = [item async for item in plugin.login(FakeEvent())]
+        self.assertIn(("image", b"qr"), allowed[0])
+        self.assertIn("二维码已过期", allowed[-1])
+
+    async def test_query_cooldown_does_not_delay_normal_api_requests(self):
         schema = json.loads((ROOT / "_conf_schema.json").read_text(encoding="utf-8"))
         hero_field = schema["hero_mappings"]
         self.assertEqual(hero_field["type"], "template_list")
@@ -133,6 +166,8 @@ class PluginFlowTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(defaults["73"], "叶修")
         self.assertEqual(schema["query_interval_seconds"]["default"], 4.0)
         self.assertEqual(schema["detail_interval_seconds"]["default"], 4.0)
+        self.assertIn("发起查询", schema["query_interval_seconds"]["hint"])
+        self.assertIn("互不影响", schema["detail_interval_seconds"]["hint"])
         plugin = self.main.NarakaPlugin(None, {"query_interval_seconds": 1,
                                               "detail_interval_seconds": 4})
         plugin._auth = {"cookies": {"test": "ok"}, "device_id": "test"}
@@ -168,11 +203,14 @@ class PluginFlowTests(unittest.IsolatedAsyncioTestCase):
             await plugin._post_raw("/game/yjwj/match/detail", {}, session)
             await plugin._post_raw("/game/yjwj/match/list", {}, session)
             await plugin._post_raw("/game/yjwj/match/detail", {}, session)
-        self.assertEqual(waits, [1.0, 3.0])
+            self.assertEqual(plugin._start_query_cooldown(), 0)
+            self.assertEqual(plugin._start_query_cooldown(), 1)
+        self.assertEqual(waits, [4.0])
 
     async def test_summary_and_detail_commands_are_separate_and_mention_sender(self):
         plugin = self.main.NarakaPlugin(None, {"query_match_count": 2,
                                               "selected_match_count": 1,
+                                              "query_interval_seconds": 0,
                                               "detail_interval_seconds": 0})
         rows = [
             {"match_id": "quick", "battle_tid": "6", "time": "200", "hero_id": "1"},
@@ -232,9 +270,77 @@ class PluginFlowTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(slash, ["done"])
         self.assertEqual(unrelated, [])
 
+    async def test_search_and_admin_logout_have_plain_message_entries(self):
+        plugin = self.main.NarakaPlugin(None, {"query_interval_seconds": 0})
+        plugin._search = AsyncMock(return_value=[{
+            "role_name": "测试玩家", "role_id": TEST_ROLE_ID,
+            "level": "100", "rank_score": "5000",
+        }])
+        searched = [item async for item in plugin.on_message(
+            FakeEvent(message_str="永劫搜索 测试玩家"))]
+        self.assertIn(TEST_ROLE_ID, searched[0][-1][1])
+
+        plugin._auth = {"cookies": {"test": "ok"}}
+        logged_out = [item async for item in plugin.on_admin_plain_message(
+            FakeEvent(message_str="永劫退出"))]
+        self.assertIn("已清除", logged_out[0])
+        self.assertEqual(plugin._auth, {})
+        self.assertEqual(plugin.on_admin_plain_message._required_permission, "admin")
+
+        raw_login = [item async for item in plugin.on_message(
+            FakeEvent(message_str="永劫登录"))]
+        self.assertEqual(raw_login, [])
+
+    async def test_plain_season_query_shows_all_stats_with_shared_notice(self):
+        plugin = self.main.NarakaPlugin(None, {"enable_start_notice": True,
+                                            "start_notice_method": "quote"})
+        overview = [{"desc": f"指标{i}", "value": str(i)} for i in range(16)]
+        overview.append({"desc": "未提供", "value": ""})
+        matches = [{"battle_tid": "12", "rank": i, "kill_times": 0,
+                    "damage": i * 100, "grade": "A"} for i in range(10)]
+
+        async def fake_post(path, params):
+            if params["season"] == "pre-01":
+                return {"seasons": [{"key": "qianji", "value": "千机赛季"}]}
+            return {"player_info": {"name": "测试玩家", "rating": "6852", "level": "无相龙王"},
+                    "overview": overview, "matches": matches, "battle_tid": "12"}
+
+        plugin._post = AsyncMock(side_effect=fake_post)
+        outputs = [item async for item in plugin.on_message(
+            FakeEvent(message_str=f"永劫赛季 {TEST_ROLE_ID} 天选双排"))]
+        report = "\n".join(item[-1][1] for item in outputs)
+        self.assertIn("测试玩家", report)
+        self.assertIn("指标15：15", report)
+        self.assertNotIn("近期对局", report)
+        self.assertNotIn("排名 #9", report)
+        self.assertNotIn("未提供", report)
+        self.assertEqual(outputs[0][0], ("reply", "789"))
+        self.assertEqual(outputs[1][0], ("at", "456"))
+        self.assertEqual(plugin._post.await_count, 2)
+
+    async def test_season_without_mode_uses_latest_ranked_match(self):
+        plugin = self.main.NarakaPlugin(None, {"query_match_count": 2})
+
+        async def fake_post(path, params, session=None):
+            if path.endswith("match/list"):
+                return {"match_list": [
+                    {"match_id": "quick", "battle_tid": "6", "time": "200"},
+                    {"match_id": "ranked", "battle_tid": "5", "time": "100"},
+                ]}
+            if params["season"] == "pre-01":
+                return {"seasons": [{"key": "qianji", "value": "千机赛季"}]}
+            return {"player_info": {"rating": "4934"}, "overview": []}
+
+        plugin._post = AsyncMock(side_effect=fake_post)
+        outputs = [item async for item in plugin.on_message(
+            FakeEvent(message_str=f"永劫赛季 {TEST_ROLE_ID}"))]
+        self.assertIn("天人三排", outputs[0][-1][1])
+        self.assertEqual(plugin._post.call_args_list[1].args[1]["battle_tid"], "5")
+
     async def test_configured_hero_name_updates_both_reports_without_dropping_matches(self):
         plugin = self.main.NarakaPlugin(None, {"query_match_count": 2,
                                               "selected_match_count": 2,
+                                              "query_interval_seconds": 0,
                                               "hero_mappings": [{"__template_key": "hero",
                                                                  "hero_id": "30", "hero_name": "自定义万钧"}],
                                               "detail_interval_seconds": 0})

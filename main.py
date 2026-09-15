@@ -62,6 +62,24 @@ def _text(value: object) -> str:
     return str(value) if value is not None else "—"
 
 
+def _has_value(value: object) -> bool:
+    return value is not None and str(value).strip() != ""
+
+
+def _split_lines(lines: list[str], limit: int = 1200) -> list[str]:
+    """Keep a complete season report readable in QQ without dropping rows."""
+    chunks: list[str] = []
+    current = ""
+    for line in lines:
+        if current and len(current) + len(line) + 1 > limit:
+            chunks.append(current)
+            current = ""
+        current = f"{current}\n{line}" if current else line
+    if current:
+        chunks.append(current)
+    return chunks
+
+
 def _must_stop_after_error(exc: Exception) -> bool:
     return (
         _is_rate_limited(exc)
@@ -107,7 +125,7 @@ def _choose_season(options: object, requested: str) -> tuple[str, str]:
     return match[0], match[1]
 
 
-@register(PLUGIN, "as124da1231", "永劫无间端游战绩查询", "1.0.4")
+@register(PLUGIN, "as124da1231", "永劫无间端游战绩查询", "1.0.9")
 class NarakaPlugin(Star):
     def __init__(self, context: Context, config: AstrBotConfig):
         super().__init__(context)
@@ -117,7 +135,7 @@ class NarakaPlugin(Star):
         self._login_lock = asyncio.Lock()
         self._query_lock = asyncio.Lock()
         self._request_lock = asyncio.Lock()
-        self._last_request_at: float | None = None
+        self._last_query_started_at: float | None = None
         self._last_detail_request_at: float | None = None
         self._detail_cache: dict[tuple[str, str], dict] = {}
         self._auth = self._load_auth()
@@ -135,8 +153,19 @@ class NarakaPlugin(Star):
         except (TypeError, ValueError):
             return default
 
+    def _start_query_cooldown(self) -> int:
+        """Reserve one user-initiated query and return remaining cooldown seconds."""
+        now = time.monotonic()
+        interval = self._number_setting("query_interval_seconds", 4.0, 0.0, 120.0)
+        if self._last_query_started_at is not None:
+            remaining = interval - (now - self._last_query_started_at)
+            if remaining > 0:
+                return max(1, int(remaining + 0.999))
+        self._last_query_started_at = now
+        return 0
+
     async def _fetch_recent_pool(self, common: dict[str, str], limit: int,
-                                 session: aiohttp.ClientSession) -> list[dict]:
+                                 session: aiohttp.ClientSession | None) -> list[dict]:
         """Read successive mixed pages; stop if upstream repeats a page."""
         seen: dict[str, dict] = {}
         page = 1
@@ -229,9 +258,6 @@ class NarakaPlugin(Star):
         async with self._request_lock:
             now = time.monotonic()
             remaining = 0.0
-            if self._last_request_at is not None:
-                interval = self._number_setting("query_interval_seconds", 4.0, 0.0, 120.0)
-                remaining = interval - (now - self._last_request_at)
             is_detail = path == "/game/yjwj/match/detail"
             if is_detail and self._last_detail_request_at is not None:
                 detail_interval = self._number_setting("detail_interval_seconds", 4.0, 0.0, 120.0)
@@ -243,9 +269,8 @@ class NarakaPlugin(Star):
                     response.raise_for_status()
                     payload = await response.json(content_type=None)
             finally:
-                self._last_request_at = time.monotonic()
                 if is_detail:
-                    self._last_detail_request_at = self._last_request_at
+                    self._last_detail_request_at = time.monotonic()
         if not isinstance(payload, dict):
             raise ValueError("小黑盒未返回有效数据")
         return payload
@@ -259,8 +284,8 @@ class NarakaPlugin(Star):
     @filter.permission_type(filter.PermissionType.ADMIN)
     @filter.command("永劫登录")
     async def login(self, event: AstrMessageEvent):
-        if not event.is_private_chat():
-            yield event.plain_result("请私聊机器人发送 /永劫登录；登录二维码不会发到群里。")
+        if not event.is_private_chat() and not self.config.get("allow_group_login_qr", False):
+            yield event.plain_result("请私聊机器人发送 /永劫登录；如需在群里扫码，请先开启「允许登录二维码发到群里」。")
             return
         if self._login_lock.locked():
             yield event.plain_result("已有登录流程正在等待扫码。")
@@ -270,7 +295,7 @@ class NarakaPlugin(Star):
                 client = XiaoheiheLoginClient()
                 qr = await client.request_qr()
                 yield event.chain_result([
-                    Comp.Plain("请用小黑盒 App 扫码并确认；此二维码只发在私聊。"),
+                    Comp.Plain("请用小黑盒 App 扫码并确认；二维码约 2 分钟后失效。"),
                     Comp.Image.fromBytes(generate_qr_png(qr.qr_content)),
                 ])
                 until = min(qr.expires_at, time.time() + 120)
@@ -307,7 +332,11 @@ class NarakaPlugin(Star):
         if not self._allowed_group(event):
             return
         if not nickname:
-            yield self._reply(event, "用法：/永劫搜索 玩家昵称")
+            yield self._reply(event, "用法：永劫搜索 玩家昵称")
+            return
+        cooldown = self._start_query_cooldown()
+        if cooldown:
+            yield self._reply(event, f"查询过于频繁，请 {cooldown} 秒后再试。")
             return
         try:
             rows = await self._search(nickname)
@@ -320,7 +349,7 @@ class NarakaPlugin(Star):
                     f"{_text(row.get('role_name'))}｜角色ID {_text(row.get('role_id'))}｜"
                     f"等级 {_text(row.get('level'))}｜分数 {_text(row.get('rank_score'))}"
                 )
-            lines.append(f"查近期对局：/战绩查询 {nickname}（同名玩家请填角色ID）")
+            lines.append(f"查近期对局：战绩查询 {nickname}（同名玩家请填角色ID）")
             yield self._reply(event, "\n".join(lines))
         except (aiohttp.ClientError, asyncio.TimeoutError, ValueError) as exc:
             yield self._reply(event, f"查询失败：{exc}")
@@ -329,6 +358,23 @@ class NarakaPlugin(Star):
     async def on_message(self, event: AstrMessageEvent):
         """Use one listener for slash and plain-text queries to avoid duplicates."""
         text = str(event.message_str or "").strip()
+        if not text.startswith("/"):
+            search_match = re.fullmatch(r"永劫搜索(?:\s+(.*))?", text, re.S)
+            if search_match is not None:
+                async for message in self.search(event, (search_match.group(1) or "").strip()):
+                    yield message
+                return
+            season_match = re.fullmatch(r"永劫赛季(?:\s+(.*))?", text, re.S)
+            if season_match is not None:
+                if not self._allowed_group(event):
+                    return
+                args = (season_match.group(1) or "").split()
+                if len(args) > 3:
+                    yield self._reply(event, "用法：永劫赛季 昵称或角色ID [模式] [当前/全部/赛季名]")
+                    return
+                async for message in self.stats(event, *args):
+                    yield message
+                return
         if text.startswith("/"):
             text = text[1:].lstrip()
         match = re.fullmatch(r"(战绩查询|详细查询|永劫战绩)(?:\s+(.*))?", text, re.S)
@@ -344,6 +390,14 @@ class NarakaPlugin(Star):
         mode = args[1] if len(args) == 2 else ""
         async for message in self._query_records(event, player, mode, detailed=match.group(1) == "详细查询"):
             yield message
+
+    @filter.permission_type(filter.PermissionType.ADMIN)
+    @filter.event_message_type(filter.EventMessageType.ALL, priority=6)
+    async def on_admin_plain_message(self, event: AstrMessageEvent):
+        """Allow the administrative logout command without a wake prefix."""
+        if str(event.message_str or "").strip() == "永劫退出":
+            async for message in self.logout(event):
+                yield message
 
     async def query_records(self, event: AstrMessageEvent, player: str = "", mode: str = ""):
         async for message in self._query_records(event, player, mode):
@@ -362,7 +416,7 @@ class NarakaPlugin(Star):
             return
         if not player:
             command = "详细查询" if detailed else "战绩查询"
-            yield self._reply(event, f"用法：/{command} <昵称或角色ID> [模式]；不填模式时自动选择最新一场排位对局的模式。")
+            yield self._reply(event, f"用法：{command} <昵称或角色ID> [模式]；不填模式时自动选择最新一场排位对局的模式。")
             return
         if mode:
             try:
@@ -372,6 +426,10 @@ class NarakaPlugin(Star):
                 return
         if self._query_lock.locked():
             yield self._reply(event, "已有一份战绩正在查询，请稍后再试。")
+            return
+        cooldown = self._start_query_cooldown()
+        if cooldown:
+            yield self._reply(event, f"查询过于频繁，请 {cooldown} 秒后再试。")
             return
         async with self._query_lock:
             notice = await self._start_notice(event)
@@ -493,25 +551,42 @@ class NarakaPlugin(Star):
                     yield self._reply(event, "查询失败：小黑盒网络请求异常，请稍后重试。")
 
     @filter.command("永劫赛季")
-    async def stats(self, event: AstrMessageEvent, player: str = "", mode: str = "天选双排", season: str = "当前"):
+    async def stats(self, event: AstrMessageEvent, player: str = "", mode: str = "", season: str = "当前"):
         if not self._allowed_group(event):
             return
         if not player:
-            yield self._reply(event, "用法：/永劫赛季 昵称或角色ID [天人单排/双排/三排或天选单排/双排/三排] [当前/全部/赛季名]")
+            yield self._reply(event, "用法：永劫赛季 昵称或角色ID [天人单排/双排/三排或天选单排/双排/三排] [当前/全部/赛季名]")
             return
         if mode in ("单排", "双排", "三排"):
             mode = "天选" + mode
-        try:
-            mode_id = resolve_mode(mode)
-        except ValueError as exc:
-            yield self._reply(event, str(exc))
+        mode_id = None
+        if mode:
+            try:
+                mode_id = resolve_mode(mode)
+            except ValueError as exc:
+                yield self._reply(event, str(exc))
+                return
+            if mode_id not in RANKED_IDS:
+                yield self._reply(event, "赛季总览只支持天人和天选的单排、双排、三排。")
+                return
+        if self._query_lock.locked():
+            yield self._reply(event, "已有一份战绩正在查询，请稍后再试。")
             return
-        if mode_id not in RANKED_IDS:
-            yield self._reply(event, "赛季总览只支持天人和天选的单排、双排、三排。")
+        cooldown = self._start_query_cooldown()
+        if cooldown:
+            yield self._reply(event, f"查询过于频繁，请 {cooldown} 秒后再试。")
             return
+        async with self._query_lock:
+            notice = await self._start_notice(event)
+            if notice is not None:
+                yield notice
+            async for message in self._season_report(event, player, mode_id, season):
+                yield message
+
+    async def _season_report(self, event: AstrMessageEvent, player: str, mode_id: str | None, season: str):
         try:
             if _is_role_id(player):
-                role_id, name = player, player
+                role_id, name, server = player, player, "163"
             else:
                 matches = await self._search(player)
                 exact_matches = [r for r in matches if r.get("role_name") == player]
@@ -527,11 +602,23 @@ class NarakaPlugin(Star):
                     return
                 role_id = str(exact.get("role_id") or "")
                 name = str(exact.get("role_name") or player)
+                server = str(exact.get("server") or "163")
             if not role_id:
                 raise ValueError("搜索结果缺少角色ID")
+            if mode_id is None:
+                common = {
+                    "server": server,
+                    "role_id": role_id,
+                    "heybox_id": str(self._auth.get("uid") or self._auth.get("cookies", {}).get("heybox_id") or ""),
+                }
+                rows = await self._fetch_recent_pool(common, self._count_setting("query_match_count", 30), None)
+                mode_id, _ = select_matches(rows, "", 1)
+                if mode_id is None:
+                    yield self._reply(event, "近期对局中没有可自动选择的天人或天选模式，请指定模式后重试。")
+                    return
             # The archived Xiaoheihe client identifies Tianxuan duo as 12.
             params = {
-                "server": "163",
+                "server": server,
                 "role_id": role_id,
                 "battle_tid": mode_id,
                 "season": "pre-01",
@@ -545,24 +632,20 @@ class NarakaPlugin(Star):
                 body = await self._post("/game/yjwj/home/data", {**params, "season": season_key})
             info = body.get("player_info") or {}
             overview = body.get("overview") or []
-            matches = body.get("matches") or []
             returned_mode = str(body.get("battle_tid") or mode_id)
             mode_name = MODES.get(returned_mode, f"模式 {returned_mode}")
+            if isinstance(info, dict) and _has_value(info.get("name")):
+                name = str(info["name"])
             lines = [f"{name}（角色ID {role_id}）", f"{mode_name}｜{season_name}"]
             if isinstance(info, dict):
-                lines.append(f"分数：{_text(info.get('rating'))}｜段位：{_text(info.get('level'))}")
-            for item in overview[:8]:
-                if isinstance(item, dict):
-                    lines.append(f"{_text(item.get('desc'))}：{_text(item.get('value'))}")
-            if isinstance(matches, list) and matches:
-                lines.append("最近对局：")
-                for item in matches[:5]:
-                    if isinstance(item, dict):
-                        match_mode = MODES.get(str(item.get("battle_tid") or ""), "其他模式")
-                        lines.append(
-                            f"{match_mode}｜排名 #{_text(item.get('rank'))}｜击败 {_text(item.get('kill_times'))}｜"
-                            f"伤害 {_text(item.get('damage'))}｜评分 {_text(item.get('grade'))}"
-                        )
-            yield self._reply(event, "\n".join(lines))
+                for key, label in (("rating", "分数"), ("level", "段位"), ("lv", "等级")):
+                    if _has_value(info.get(key)):
+                        lines.append(f"{label}：{info[key]}")
+            if isinstance(overview, list):
+                for item in overview:
+                    if isinstance(item, dict) and _has_value(item.get("desc")) and _has_value(item.get("value")):
+                        lines.append(f"{item['desc']}：{item['value']}")
+            for chunk in _split_lines(lines):
+                yield self._reply(event, chunk)
         except (aiohttp.ClientError, asyncio.TimeoutError, ValueError) as exc:
             yield self._reply(event, f"查询失败：{exc}")
