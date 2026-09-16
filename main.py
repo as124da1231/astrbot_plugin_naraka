@@ -125,7 +125,7 @@ def _choose_season(options: object, requested: str) -> tuple[str, str]:
     return match[0], match[1]
 
 
-@register(PLUGIN, "as124da1231", "永劫无间端游战绩查询", "1.0.7")
+@register(PLUGIN, "as124da1231", "永劫无间端游战绩查询", "1.0.9")
 class NarakaPlugin(Star):
     def __init__(self, context: Context, config: AstrBotConfig):
         super().__init__(context)
@@ -135,7 +135,7 @@ class NarakaPlugin(Star):
         self._login_lock = asyncio.Lock()
         self._query_lock = asyncio.Lock()
         self._request_lock = asyncio.Lock()
-        self._last_request_at: float | None = None
+        self._last_query_started_at: float | None = None
         self._last_detail_request_at: float | None = None
         self._detail_cache: dict[tuple[str, str], dict] = {}
         self._auth = self._load_auth()
@@ -152,6 +152,17 @@ class NarakaPlugin(Star):
             return max(1, int(self.config.get(key, default)))
         except (TypeError, ValueError):
             return default
+
+    def _start_query_cooldown(self) -> int:
+        """Reserve one user-initiated query and return remaining cooldown seconds."""
+        now = time.monotonic()
+        interval = self._number_setting("query_interval_seconds", 4.0, 0.0, 120.0)
+        if self._last_query_started_at is not None:
+            remaining = interval - (now - self._last_query_started_at)
+            if remaining > 0:
+                return max(1, int(remaining + 0.999))
+        self._last_query_started_at = now
+        return 0
 
     async def _fetch_recent_pool(self, common: dict[str, str], limit: int,
                                  session: aiohttp.ClientSession | None) -> list[dict]:
@@ -247,9 +258,6 @@ class NarakaPlugin(Star):
         async with self._request_lock:
             now = time.monotonic()
             remaining = 0.0
-            if self._last_request_at is not None:
-                interval = self._number_setting("query_interval_seconds", 4.0, 0.0, 120.0)
-                remaining = interval - (now - self._last_request_at)
             is_detail = path == "/game/yjwj/match/detail"
             if is_detail and self._last_detail_request_at is not None:
                 detail_interval = self._number_setting("detail_interval_seconds", 4.0, 0.0, 120.0)
@@ -261,9 +269,8 @@ class NarakaPlugin(Star):
                     response.raise_for_status()
                     payload = await response.json(content_type=None)
             finally:
-                self._last_request_at = time.monotonic()
                 if is_detail:
-                    self._last_detail_request_at = self._last_request_at
+                    self._last_detail_request_at = time.monotonic()
         if not isinstance(payload, dict):
             raise ValueError("小黑盒未返回有效数据")
         return payload
@@ -325,7 +332,11 @@ class NarakaPlugin(Star):
         if not self._allowed_group(event):
             return
         if not nickname:
-            yield self._reply(event, "用法：/永劫搜索 玩家昵称")
+            yield self._reply(event, "用法：永劫搜索 玩家昵称")
+            return
+        cooldown = self._start_query_cooldown()
+        if cooldown:
+            yield self._reply(event, f"查询过于频繁，请 {cooldown} 秒后再试。")
             return
         try:
             rows = await self._search(nickname)
@@ -338,7 +349,7 @@ class NarakaPlugin(Star):
                     f"{_text(row.get('role_name'))}｜角色ID {_text(row.get('role_id'))}｜"
                     f"等级 {_text(row.get('level'))}｜分数 {_text(row.get('rank_score'))}"
                 )
-            lines.append(f"查近期对局：/战绩查询 {nickname}（同名玩家请填角色ID）")
+            lines.append(f"查近期对局：战绩查询 {nickname}（同名玩家请填角色ID）")
             yield self._reply(event, "\n".join(lines))
         except (aiohttp.ClientError, asyncio.TimeoutError, ValueError) as exc:
             yield self._reply(event, f"查询失败：{exc}")
@@ -348,6 +359,11 @@ class NarakaPlugin(Star):
         """Use one listener for slash and plain-text queries to avoid duplicates."""
         text = str(event.message_str or "").strip()
         if not text.startswith("/"):
+            search_match = re.fullmatch(r"永劫搜索(?:\s+(.*))?", text, re.S)
+            if search_match is not None:
+                async for message in self.search(event, (search_match.group(1) or "").strip()):
+                    yield message
+                return
             season_match = re.fullmatch(r"永劫赛季(?:\s+(.*))?", text, re.S)
             if season_match is not None:
                 if not self._allowed_group(event):
@@ -392,7 +408,7 @@ class NarakaPlugin(Star):
             return
         if not player:
             command = "详细查询" if detailed else "战绩查询"
-            yield self._reply(event, f"用法：/{command} <昵称或角色ID> [模式]；不填模式时自动选择最新一场排位对局的模式。")
+            yield self._reply(event, f"用法：{command} <昵称或角色ID> [模式]；不填模式时自动选择最新一场排位对局的模式。")
             return
         if mode:
             try:
@@ -402,6 +418,10 @@ class NarakaPlugin(Star):
                 return
         if self._query_lock.locked():
             yield self._reply(event, "已有一份战绩正在查询，请稍后再试。")
+            return
+        cooldown = self._start_query_cooldown()
+        if cooldown:
+            yield self._reply(event, f"查询过于频繁，请 {cooldown} 秒后再试。")
             return
         async with self._query_lock:
             notice = await self._start_notice(event)
@@ -543,6 +563,10 @@ class NarakaPlugin(Star):
                 return
         if self._query_lock.locked():
             yield self._reply(event, "已有一份战绩正在查询，请稍后再试。")
+            return
+        cooldown = self._start_query_cooldown()
+        if cooldown:
+            yield self._reply(event, f"查询过于频繁，请 {cooldown} 秒后再试。")
             return
         async with self._query_lock:
             notice = await self._start_notice(event)

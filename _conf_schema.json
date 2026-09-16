@@ -192,13 +192,13 @@
   "query_interval_seconds": {
     "type": "float",
     "description": "查询间隔（秒）",
-    "hint": "所有小黑盒战绩请求之间的最短间隔，建议 4 秒；设置 0 可关闭。",
+    "hint": "两次发起查询之间的最短间隔，用于防止重复触发；不会延迟一次查询内部的普通接口请求。建议 4 秒，设置 0 可关闭。",
     "default": 4.0
   },
   "detail_interval_seconds": {
     "type": "float",
     "description": "有效对局详情查询间隔（秒）",
-    "hint": "两次单局详情请求之间的最短间隔，建议 4 秒；仍受查询间隔约束。",
+    "hint": "同一次查询中，相邻两次单局详情请求之间的最短间隔，建议 4 秒；与上方的发起查询间隔互不影响。",
     "default": 4.0
   },
   "enable_group_whitelist": {
