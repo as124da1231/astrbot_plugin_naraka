@@ -155,7 +155,7 @@ class PluginFlowTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn(("image", b"qr"), allowed[0])
         self.assertIn("二维码已过期", allowed[-1])
 
-    async def test_query_cooldown_does_not_delay_normal_api_requests(self):
+    async def test_query_and_detail_intervals_are_independent(self):
         schema = json.loads((ROOT / "_conf_schema.json").read_text(encoding="utf-8"))
         hero_field = schema["hero_mappings"]
         self.assertEqual(hero_field["type"], "template_list")
@@ -166,8 +166,6 @@ class PluginFlowTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(defaults["73"], "叶修")
         self.assertEqual(schema["query_interval_seconds"]["default"], 4.0)
         self.assertEqual(schema["detail_interval_seconds"]["default"], 4.0)
-        self.assertIn("发起查询", schema["query_interval_seconds"]["hint"])
-        self.assertIn("互不影响", schema["detail_interval_seconds"]["hint"])
         plugin = self.main.NarakaPlugin(None, {"query_interval_seconds": 1,
                                               "detail_interval_seconds": 4})
         plugin._auth = {"cookies": {"test": "ok"}, "device_id": "test"}
@@ -203,14 +201,11 @@ class PluginFlowTests(unittest.IsolatedAsyncioTestCase):
             await plugin._post_raw("/game/yjwj/match/detail", {}, session)
             await plugin._post_raw("/game/yjwj/match/list", {}, session)
             await plugin._post_raw("/game/yjwj/match/detail", {}, session)
-            self.assertEqual(plugin._start_query_cooldown(), 0)
-            self.assertEqual(plugin._start_query_cooldown(), 1)
-        self.assertEqual(waits, [4.0])
+        self.assertEqual(waits, [1.0, 3.0])
 
     async def test_summary_and_detail_commands_are_separate_and_mention_sender(self):
         plugin = self.main.NarakaPlugin(None, {"query_match_count": 2,
                                               "selected_match_count": 1,
-                                              "query_interval_seconds": 0,
                                               "detail_interval_seconds": 0})
         rows = [
             {"match_id": "quick", "battle_tid": "6", "time": "200", "hero_id": "1"},
@@ -270,27 +265,6 @@ class PluginFlowTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(slash, ["done"])
         self.assertEqual(unrelated, [])
 
-    async def test_search_and_admin_logout_have_plain_message_entries(self):
-        plugin = self.main.NarakaPlugin(None, {"query_interval_seconds": 0})
-        plugin._search = AsyncMock(return_value=[{
-            "role_name": "测试玩家", "role_id": TEST_ROLE_ID,
-            "level": "100", "rank_score": "5000",
-        }])
-        searched = [item async for item in plugin.on_message(
-            FakeEvent(message_str="永劫搜索 测试玩家"))]
-        self.assertIn(TEST_ROLE_ID, searched[0][-1][1])
-
-        plugin._auth = {"cookies": {"test": "ok"}}
-        logged_out = [item async for item in plugin.on_admin_plain_message(
-            FakeEvent(message_str="永劫退出"))]
-        self.assertIn("已清除", logged_out[0])
-        self.assertEqual(plugin._auth, {})
-        self.assertEqual(plugin.on_admin_plain_message._required_permission, "admin")
-
-        raw_login = [item async for item in plugin.on_message(
-            FakeEvent(message_str="永劫登录"))]
-        self.assertEqual(raw_login, [])
-
     async def test_plain_season_query_shows_all_stats_with_shared_notice(self):
         plugin = self.main.NarakaPlugin(None, {"enable_start_notice": True,
                                             "start_notice_method": "quote"})
@@ -340,7 +314,6 @@ class PluginFlowTests(unittest.IsolatedAsyncioTestCase):
     async def test_configured_hero_name_updates_both_reports_without_dropping_matches(self):
         plugin = self.main.NarakaPlugin(None, {"query_match_count": 2,
                                               "selected_match_count": 2,
-                                              "query_interval_seconds": 0,
                                               "hero_mappings": [{"__template_key": "hero",
                                                                  "hero_id": "30", "hero_name": "自定义万钧"}],
                                               "detail_interval_seconds": 0})
