@@ -1,4 +1,84 @@
 {
+  "data_mode": {
+    "type": "string",
+    "description": "数据模式",
+    "hint": "heybox=小黑盒 App 扫码登录；wechat=微信扫码登录（两者查询能力完全等价，只是扫码渠道不同）；none=不登录，只用免登录接口，战绩查询退化为「角色名片」。",
+    "options": [
+      "heybox",
+      "wechat",
+      "none"
+    ],
+    "default": "heybox"
+  },
+  "device_id_mode": {
+    "type": "string",
+    "description": "设备标识 device_id 策略",
+    "hint": "小黑盒客户端标识，随每次请求一起发送。reuse=复用首次生成的值（建议默认，官方客户端也是固定值）；random=每次登录都换新的；off=完全不发送该参数。",
+    "options": [
+      "reuse",
+      "random",
+      "off"
+    ],
+    "default": "reuse"
+  },
+  "login_search_fallback": {
+    "type": "bool",
+    "description": "免登录搜索失败时回退到登录搜索",
+    "hint": "默认关闭：搜索一律走免登录通道，绝不携带登录信息。开启后，免登录通道没结果时会再用带登录信息的搜索试一次——好处是可能少绑定一次，代价是搜索请求会带上你的登录凭证。建议保持默认关闭。",
+    "default": false
+  },
+  "auto_bind": {
+    "type": "bool",
+    "description": "自动绑定兜底",
+    "hint": "开启后，战绩查询搜不到昵称时会自动把该昵称绑到你的小黑盒账号，查完立刻解绑（一次只绑一个号）。关闭则完全退回只读行为。",
+    "default": true
+  },
+  "refresh_before_query": {
+    "type": "bool",
+    "description": "查询前先触发数据更新",
+    "hint": "对应小黑盒的「更新数据」。开启数据更准，代价是每次查询多一次请求；关闭可加快查询速度。",
+    "default": true
+  },
+  "bind_negative_cache_minutes": {
+    "type": "float",
+    "description": "绑定负缓存（分钟）",
+    "hint": "同一昵称绑定过、但绑定后仍然查不到数据时，这段时间内不再重复绑定，避免写操作过多。",
+    "default": 10.0
+  },
+  "residual_unbind_interval_minutes": {
+    "type": "float",
+    "description": "残留绑定重试间隔（分钟）",
+    "hint": "解绑失败会留下残留绑定。插件在启动后第一次查询时尝试补解绑，之后按此间隔重试；也可以随时发送 /永劫残留 手动重试。",
+    "default": 60.0
+  },
+  "match_list_pagination": {
+    "type": "string",
+    "description": "对局列表分页参数",
+    "hint": "offset=发送 limit/offset（默认，推荐）；page=发送 page/page_size（旧版用法，可能一直未生效）。把「查询对局数」调到 60 以上再切换此项，对比「查询最近场次」是否增加即可确认哪个生效。",
+    "options": [
+      "offset",
+      "page"
+    ],
+    "default": "offset"
+  },
+  "bind_state_interval_seconds": {
+    "type": "float",
+    "description": "绑定结果轮询间隔（秒）",
+    "hint": "触发绑定后，每隔多久问一次「绑好了没」，最多问 5 次。建议保持默认 2 秒——这是小黑盒官方客户端自己的节奏，调太小只是白问（服务端还没处理完）。",
+    "default": 2.0
+  },
+  "update_retry_interval_seconds": {
+    "type": "float",
+    "description": "数据更新重试间隔（秒）",
+    "hint": "「更新数据」返回 waiting/updating 时，隔多久重试一次，最多 3 次。建议保持默认 3 秒（官方客户端节奏）。",
+    "default": 3.0
+  },
+  "unbind_retry_interval_seconds": {
+    "type": "float",
+    "description": "解绑重试间隔（秒）",
+    "hint": "解绑失败后隔多久重试，最多 3 次。建议保持默认 2 秒；调太小容易连续撞上限流。",
+    "default": 2.0
+  },
   "query_match_count": {
     "type": "int",
     "description": "查询对局数",
@@ -191,14 +271,20 @@
   },
   "query_interval_seconds": {
     "type": "float",
-    "description": "查询间隔（秒）",
-    "hint": "两次发起查询之间的最短间隔，用于防止重复触发；不会延迟一次查询内部的普通接口请求。建议 4 秒，设置 0 可关闭。",
+    "description": "A 用户请求间隔（秒）",
+    "hint": "两个用户发起的查询之间最短多久。只限制「发起」，不会延长一次查询本身，与 B 相互独立。设 0 = 关闭。",
     "default": 4.0
+  },
+  "request_interval_seconds": {
+    "type": "float",
+    "description": "B 机器人请求每项间隔（秒）",
+    "hint": "机器人**每一次**上游请求之间的最小间隔，覆盖搜索/绑定/轮询/更新/对局列表/详情/解绑全部请求。B 包含 C：详情请求取 max(B, C)。设 0 = 关闭（默认）。",
+    "default": 0.0
   },
   "detail_interval_seconds": {
     "type": "float",
-    "description": "有效对局详情查询间隔（秒）",
-    "hint": "同一次查询中，相邻两次单局详情请求之间的最短间隔，建议 4 秒；与上方的发起查询间隔互不影响。",
+    "description": "C 仅单局查询之间间隔（秒）",
+    "hint": "**只管相邻两次单局详情之间**的额外最小间隔，不影响其它请求。与 B 取较大值，不叠加。建议 4 秒；设 0 = 关闭。",
     "default": 4.0
   },
   "enable_group_whitelist": {
@@ -221,41 +307,48 @@
   },
   "enable_start_notice": {
     "type": "bool",
-    "description": "开始查询时发送提示",
-    "hint": "默认关闭。开启后按下方选择引用原消息、@查询人，或给原消息贴 QQ 表情回应。",
+    "description": "收到请求立刻回执",
+    "hint": "开启后，战绩查询、详细查询、战绩绑定、永劫赛季 会先回一条「已收到」。",
     "default": false
   },
   "start_notice_method": {
     "type": "string",
-    "description": "开始提示方式",
-    "hint": "quote=引用原消息并发文字；mention=@查询人并发文字；reaction=给原消息贴 QQ 表情回应，不另发消息。",
+    "description": "回执方式",
+    "hint": "quote=引用原消息并发文字（默认）；plain=直接发文字，不带引用；reaction=给原消息贴 QQ 表情回应，不另发消息（仅 aiocqhttp）。",
     "options": [
       "quote",
-      "mention",
+      "plain",
       "reaction"
     ],
     "default": "quote"
   },
   "start_notice_text": {
     "type": "string",
-    "description": "开始提示文字",
-    "hint": "提示方式为引用或 @ 时发送的文字。",
-    "default": "正在查询战绩，请稍候…"
+    "description": "回执文字",
+    "hint": "回执方式为 quote / plain 时发送的文字（reaction 不发文字）。建议写成「已收到，正在查询…」这类明确的收执语。",
+    "default": "已收到请求，正在查询…"
   },
   "react_emoji_id": {
     "type": "string",
     "description": "QQ 表情回应 ID",
-    "hint": "开始提示方式为 reaction 时使用，默认 277；仅 aiocqhttp 生效。",
+    "hint": "回执方式为 reaction 时使用，默认 277；仅 aiocqhttp 生效。表情回应调用失败会自动退回文字回执。",
     "default": "277"
   },
   "result_reply_method": {
     "type": "string",
     "description": "战绩结果回复方式",
-    "hint": "quote=引用原消息；mention=@查询人。群聊和私聊都支持引用；私聊选择 @ 时发送普通文字。",
+    "hint": "quote=引用原消息（默认）；plain=直接发纯文本；at=@触发者 + 空格 + 正文（走底层 API，仅 aiocqhttp）。只作用于 战绩查询／详细查询／战绩绑定／永劫赛季 的战绩正文；其余回复一律直接发。",
     "options": [
       "quote",
-      "mention"
+      "plain",
+      "at"
     ],
-    "default": "mention"
+    "default": "quote"
+  },
+  "enable_detail_query": {
+    "type": "bool",
+    "description": "启用单局详情查询",
+    "hint": "开启后会逐场调用单局详情接口以计算振刀、恢复等字段；关闭后只展示列表级数据（击杀、伤害），详细查询将不可用。默认开启。",
+    "default": true
   }
 }

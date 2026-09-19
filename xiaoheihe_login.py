@@ -1,44 +1,30 @@
-"""小黑盒扫码登录模块
-
-基于 https://github.com/674537331/astrbot_plugin_xiaoheihe_adapter 的实现，
-仅保留扫码登录所需的最小功能集：请求签名、请求二维码、轮询登录状态、提取凭证。
-
-请求签名中的 hkey 算法独立移植自 MIT 许可的 heybox-core 实现（XiaHouSheng）。
-MD5 仅用于满足上游兼容性要求，不用于任何本地安全决策。
-"""
+"""小黑盒扫码登录模块"""
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import hashlib
 import io
+import re
 import secrets
 import time
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any
-from urllib.parse import parse_qsl, urlsplit
+from urllib.parse import parse_qsl, quote, urlsplit
 
 import aiohttp
 import qrcode
 
+# 签名算法与固定请求参数统一由 heybox_api 提供，这里只做兼容性再导出
+from .heybox_api import (  # noqa: F401
+    WEB_CLIENT_PARAMS,
+    generate_hkey,
+    sign_params as _sign_params,
+)
+
 API_BASE_URL = "https://api.xiaoheihe.cn"
-
-# 小黑盒 Web 端固定请求参数
-WEB_CLIENT_PARAMS = {
-    "os_type": "web",
-    "app": "web",
-    "client_type": "web",
-    "version": "999.0.4",
-    "web_version": "2.5",
-    "x_client_type": "web",
-    "x_app": "heybox_website",
-    "x_os_type": "Windows",
-    "device_info": "Chrome",
-    "_notip": "true",
-}
-
-_HKEY_ALPHABET = "AB45STUVWZEFGJ6CH01D237IXYPQRKLMN89"  # gitleaks:allow
 
 _DEFAULT_UA = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
@@ -76,9 +62,6 @@ class LoginResult:
 
 
 # ==================== 请求签名 ====================
-# 以下签名逻辑独立移植自 MIT 许可的 heybox-core / heybox-bot 实现。
-
-
 def generate_device_id() -> str:
     """生成 32 字符的 Web 客户端标识"""
     return secrets.token_hex(16)
@@ -93,81 +76,6 @@ def generate_xhh_token_id(now: int | None = None) -> str:
         for part in (timestamp, *parts)
     )
     return base64.b64encode(raw + b"\x00").decode("ascii")
-
-
-def generate_hkey(path: str, timestamp: int, nonce: str) -> str:
-    """生成上游要求的 hkey 签名参数"""
-    normalized_path = f"/{'/'.join(p for p in str(path).split('/') if p)}/"
-    parts = (
-        _map_to_alphabet(str(timestamp), _HKEY_ALPHABET[:-2]),
-        _map_to_alphabet(normalized_path, _HKEY_ALPHABET),
-        _map_to_alphabet(str(nonce), _HKEY_ALPHABET),
-    )
-    interleaved = "".join(
-        part[i]
-        for i in range(max(len(p) for p in parts))
-        for part in parts
-        if i < len(part)
-    )[:20]
-    digest = hashlib.md5(interleaved.encode(), usedforsecurity=False).hexdigest()
-    mixed = _mix_tail([ord(c) for c in digest[-6:]])
-    suffix = str(sum(mixed) % 100).zfill(2)
-    prefix = _map_to_alphabet(digest[:5], _HKEY_ALPHABET[:-4])
-    return f"{prefix}{suffix}"
-
-
-def _map_to_alphabet(value: str, alphabet: str) -> str:
-    return "".join(alphabet[ord(c) % len(alphabet)] for c in value)
-
-
-def _sign_params(
-    path: str,
-    base_params: dict[str, str] | None = None,
-    device_id: str = "",
-) -> dict[str, str]:
-    """为指定路径添加 _time、nonce、hkey 签名参数"""
-    params = dict(base_params or {})
-    timestamp = int(time.time())
-    nonce = hashlib.md5(
-        f"{timestamp}{secrets.token_hex(16)}".encode(), usedforsecurity=False
-    ).hexdigest().upper()
-    params["_time"] = str(timestamp)
-    params["nonce"] = nonce
-    params["hkey"] = generate_hkey(path, timestamp, nonce)
-    if device_id:
-        params["device_id"] = device_id
-    return params
-
-
-def _xtime(v: int) -> int:
-    return (255 & ((v << 1) ^ 27)) if v & 128 else v << 1
-
-
-def _mul3(v: int) -> int:
-    return _xtime(v) ^ v
-
-
-def _mul4(v: int) -> int:
-    return _mul3(_xtime(v))
-
-
-def _mul8(v: int) -> int:
-    return _mul4(_mul3(_xtime(v)))
-
-
-def _mul14(v: int) -> int:
-    return _mul8(v) ^ _mul4(v) ^ _mul3(v)
-
-
-def _mix_tail(values: list[int]) -> list[int]:
-    a, b, c, d = values[:4]
-    return [
-        _mul14(a) ^ _mul8(b) ^ _mul4(c) ^ _mul3(d),
-        _mul3(a) ^ _mul14(b) ^ _mul8(c) ^ _mul4(d),
-        _mul4(a) ^ _mul3(b) ^ _mul14(c) ^ _mul8(d),
-        _mul8(a) ^ _mul4(b) ^ _mul3(c) ^ _mul14(d),
-        *values[4:],
-    ]
 
 
 # ==================== 响应解析 ====================
@@ -333,15 +241,24 @@ def generate_qr_png(content: str) -> bytes:
 
 
 class XiaoheiheLoginClient:
-    """小黑盒扫码登录 HTTP 客户端"""
+    """小黑盒 App 扫码登录 HTTP 客户端"""
+
+    # 主流程轮询间隔（小黑盒每次都要重新发起短轮询）
+    poll_delay = 3.0
 
     def __init__(self, device_id: str = ""):
-        self.device_id = device_id or generate_device_id()
+        # device_id 的策略由调用方决定（见 main 的 device_id_mode）：
+        # 传空字符串 = 本次请求不带 device_id 参数
+        self.device_id = device_id
         self._headers = {
             "Accept": "application/json",
             "Referer": "https://www.xiaoheihe.cn/",
             "User-Agent": _DEFAULT_UA,
         }
+
+    async def qr_image(self, qr_session: QRSession) -> bytes:
+        """小黑盒给的是二维码内容，本地渲染成 PNG。"""
+        return generate_qr_png(qr_session.qr_content)
 
     async def request_qr(self) -> QRSession:
         """请求登录二维码"""
@@ -403,3 +320,163 @@ class XiaoheiheLoginClient:
             uid=uid,
             nickname=nickname,
         )
+
+
+# ==================== 微信扫码登录 ====================
+
+
+class WechatLoginClient:
+    """微信扫码登录小黑盒（SSO 换 cookie）。"""
+
+    WEIXIN_APP_ID = "wxced0cbce486f737e"
+    LOGIN_REDIRECT = "https://api.xiaoheihe.cn/account/wechat/login_redirect/v2/web_sso/"
+    CALLBACK_URL = "http://127.0.0.1/heybox-login-callback"
+
+    # 微信是长轮询，返回很快，不需要再等 3 秒
+    poll_delay = 0.5
+
+    _UUID_RE = re.compile(r"connect/qrcode/([A-Za-z0-9_\-]{8,})")
+    _ERRCODE_RE = re.compile(r"wx_errcode=(\d+)")
+    _WXCODE_RE = re.compile(r"window\.wx_code='([^']*)'")
+
+    def __init__(self, device_id: str = ""):
+        # 同 XiaoheiheLoginClient：策略由调用方决定
+        self.device_id = device_id
+        self._headers = {
+            "User-Agent": _DEFAULT_UA,
+            "Referer": "https://open.weixin.qq.com/",
+        }
+
+    def _redirect_uri(self) -> str:
+        return f"{self.LOGIN_REDIRECT}?redirect_url={quote(self.CALLBACK_URL, safe='')}"
+
+    async def request_qr(self) -> QRSession:
+        """请求微信登录二维码（只拿到 uuid，图片另行下载）。"""
+        params = {
+            "appid": self.WEIXIN_APP_ID,
+            "redirect_uri": self._redirect_uri(),
+            "response_type": "code",
+            "scope": "snsapi_login",
+            "state": "xiaoheihe",
+        }
+        timeout = aiohttp.ClientTimeout(total=25)
+        async with aiohttp.ClientSession(timeout=timeout) as session:
+            async with session.get(
+                "https://open.weixin.qq.com/connect/qrconnect",
+                params=params,
+                headers=self._headers,
+            ) as resp:
+                resp.raise_for_status()
+                html = await resp.text()
+
+        match = self._UUID_RE.search(html)
+        if match is None:
+            raise ValueError("微信登录：未能从页面取到二维码 uuid")
+
+        uuid = match.group(1)
+        return QRSession(
+            qr_content=f"https://open.weixin.qq.com/connect/qrcode/{uuid}",
+            poll_params={"uuid": uuid},
+            expires_at=time.time() + 120,
+        )
+
+    async def qr_image(self, qr_session: QRSession) -> bytes:
+        """微信直接提供二维码图片，下载即可。"""
+        timeout = aiohttp.ClientTimeout(total=25)
+        async with aiohttp.ClientSession(timeout=timeout) as session:
+            async with session.get(qr_session.qr_content, headers=self._headers) as resp:
+                resp.raise_for_status()
+                return await resp.read()
+
+    async def check_qr(self, qr_session: QRSession) -> LoginResult:
+        """长轮询扫码状态；已确认时直接完成登录交换。"""
+        uuid = str(qr_session.poll_params.get("uuid") or "")
+        if not uuid:
+            return LoginResult(LoginState.FAILED, "缺少微信二维码 uuid")
+
+        params = {"uuid": uuid, "_": str(int(time.time() * 1000))}
+        timeout = aiohttp.ClientTimeout(total=30)
+        try:
+            async with aiohttp.ClientSession(timeout=timeout) as session:
+                async with session.get(
+                    "https://long.open.weixin.qq.com/connect/l/qrconnect",
+                    params=params,
+                    headers=self._headers,
+                ) as resp:
+                    body = await resp.text()
+        except (aiohttp.ClientError, asyncio.TimeoutError):
+            # 长轮询超时是正常的，继续等
+            return LoginResult(LoginState.WAITING_SCAN, "")
+
+        errcode_match = self._ERRCODE_RE.search(body)
+        errcode = errcode_match.group(1) if errcode_match else ""
+        if errcode == "404":
+            return LoginResult(LoginState.SCANNED_WAITING_CONFIRM, "已扫码，请在微信中确认")
+        if errcode in ("402", "403"):
+            return LoginResult(LoginState.EXPIRED, "二维码已过期")
+        if errcode != "405":
+            return LoginResult(LoginState.WAITING_SCAN, "")
+
+        wxcode_match = self._WXCODE_RE.search(body)
+        if wxcode_match is None or not wxcode_match.group(1):
+            return LoginResult(LoginState.FAILED, "微信已确认，但未取到 code")
+        return await self._exchange(wxcode_match.group(1))
+
+    async def _exchange(self, wx_code: str) -> LoginResult:
+        """用 wx_code 换取小黑盒的 pkey / heybox_id。"""
+        url = (
+            f"{self.LOGIN_REDIRECT}?redirect_url={quote(self.CALLBACK_URL, safe='')}"
+            f"&code={quote(wx_code, safe='')}&state=xiaoheihe"
+        )
+        timeout = aiohttp.ClientTimeout(total=25)
+        try:
+            async with aiohttp.ClientSession(timeout=timeout) as session:
+                async with session.get(
+                    url, headers=self._headers, allow_redirects=False
+                ) as resp:
+                    cookies = _read_set_cookies(resp)
+                    location = str(resp.headers.get("Location") or "")
+        except (aiohttp.ClientError, asyncio.TimeoutError) as exc:
+            return LoginResult(LoginState.FAILED, f"登录交换失败：{type(exc).__name__}")
+
+        query = dict(parse_qsl(urlsplit(location).query, keep_blank_values=True))
+        uid = (
+            cookies.get("user_heybox_id")
+            or cookies.get("heybox_id")
+            or query.get("heybox_id")
+            or ""
+        )
+        pkey = cookies.get("user_pkey") or cookies.get("pkey") or query.get("pkey") or ""
+        if not uid or not pkey:
+            return LoginResult(LoginState.FAILED, "登录交换未返回 pkey / heybox_id")
+
+        cookies.setdefault("pkey", pkey)
+        cookies.setdefault("user_pkey", pkey)
+        cookies.setdefault("heybox_id", uid)
+        cookies.setdefault("user_heybox_id", uid)
+        return LoginResult(LoginState.SUCCESS, "登录成功", cookies=cookies, uid=uid)
+
+
+def _read_set_cookies(response: aiohttp.ClientResponse) -> dict[str, str]:
+    """从响应头直接读取 Set-Cookie（不依赖 cookie jar）。"""
+    result: dict[str, str] = {}
+    headers = response.headers
+    values = headers.getall("Set-Cookie", []) if hasattr(headers, "getall") else []
+    for raw in values:
+        first = raw.split(";")[0]
+        key, sep, value = first.partition("=")
+        if sep and key.strip():
+            result[key.strip()] = value.strip()
+    return result
+
+
+LOGIN_CLIENTS = {
+    "heybox": XiaoheiheLoginClient,
+    "wechat": WechatLoginClient,
+}
+
+
+def create_login_client(mode: str, device_id: str = ""):
+    """按数据模式创建登录客户端；none 模式返回 None（不发二维码）。"""
+    factory = LOGIN_CLIENTS.get(str(mode or "").strip().lower())
+    return factory(device_id) if factory else None
